@@ -1,0 +1,29 @@
+{
+  "name": "nodegui-builder",
+  "version": "1.0.0",
+  "description": "Tool for packaging NodeGUI applications into standalone executables",
+  "main": "index.js",
+  "bin": {
+    "nodegui-builder": "./cli.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "nodegui",
+    "packaging",
+    "desktop",
+    "qode",
+    "qt"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "fs-extra": "^10.1.0",
+    "commander": "^9.4.0",
+    "chalk": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
