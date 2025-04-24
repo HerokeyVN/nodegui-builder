@@ -35,32 +35,45 @@ async function packageApp(options) {
     await fs.ensureDir(appDir);
     await fs.emptyDir(appDir);
     
-    // Handle main file path - properly handle subdirectories
-    const mainFilePath = path.join(config.sourceDir, config.mainFile);
-    const mainFileRelativePath = config.mainFile; // Keep relative path for launching
+    // Copy the entire project except node_modules and other unnecessary directories
+    console.log('Copying project files...');
+    const ignoredDirs = [
+      'node_modules', 
+      '.git', 
+      '.github',
+      'dist', 
+      'deploy', 
+      'build',
+      'coverage',
+      '.vscode',
+      '.idea'
+    ];
     
-    console.log(`Main file source path: ${mainFilePath}`);
-    console.log(`Main file relative path: ${mainFileRelativePath}`);
+    // Custom filter function to ignore node_modules and other directories
+    const filterFunc = (src) => {
+      const relativePath = path.relative(config.sourceDir, src);
+      
+      // Always include files at the root level
+      if (!relativePath || !relativePath.includes(path.sep)) {
+        return true;
+      }
+      
+      // Check if path starts with any ignored directory
+      return !ignoredDirs.some(dir => 
+        relativePath === dir || 
+        relativePath.startsWith(dir + path.sep)
+      );
+    };
     
-    // Check if main file exists
-    if (!fs.existsSync(mainFilePath)) {
-      throw new Error(`Main file not found: ${mainFilePath}`);
-    }
+    // Copy project files with filtering
+    await fs.copy(config.sourceDir, appDir, { 
+      filter: filterFunc,
+      dereference: true
+    });
     
-    // Create directory structure for main file if it's in a subdirectory
-    const destMainFilePath = path.join(appDir, mainFileRelativePath);
-    const destMainFileDir = path.dirname(destMainFilePath);
+    console.log('Project files copied successfully');
     
-    if (path.dirname(mainFileRelativePath) !== '.') {
-      console.log(`Creating directory structure for main file: ${path.dirname(mainFileRelativePath)}`);
-      await fs.ensureDir(destMainFileDir);
-    }
-    
-    // Copy main file preserving directory structure
-    console.log(`Copying main file to: ${destMainFilePath}`);
-    await fs.copy(mainFilePath, destMainFilePath);
-    
-    // Create node_modules directory
+    // Create node_modules directory (it might already exist from the copy operation)
     await fs.ensureDir(path.join(appDir, 'node_modules'));
     
     // Copy qode.exe

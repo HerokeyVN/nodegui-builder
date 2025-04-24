@@ -29,6 +29,14 @@ You can also add a packaging script to simplify the build process:
 }
 ```
 
+Once you've configured your package.json file, you can run:
+
+```bash
+npm run package
+```
+
+This will execute the packaging process using the parameters defined in your script.
+
 ### In JavaScript code
 
 ```javascript
@@ -64,6 +72,14 @@ After packaging, the application will include:
 1. An executable `.exe` file to launch the application
 2. A `.bat` batch file to launch from command line
 3. All necessary libraries and dependencies
+
+## Troubleshooting
+
+If the `.exe` file (other than qode.exe) is not found after packaging, you can manually compile it by:
+
+1. Navigate to your packaged application directory
+2. Run the `_compile.bat` script which is included in the output directory
+3. This will create the executable launcher for your application
 
 ## Requirements
 
