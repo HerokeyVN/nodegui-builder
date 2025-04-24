@@ -21,6 +21,7 @@ async function packageApp(options) {
     additionalModules: options.additionalModules || [],
   };
 
+  // Remove debug log
   // Resolve absolute paths to avoid path-related issues
   const sourceDirAbs = path.resolve(config.sourceDir);
   const outputDirAbs = path.resolve(config.outputDir);
@@ -120,16 +121,17 @@ async function packageApp(options) {
     );
     
     // Read package.json to get dependencies
-    let dependencies = [];
+    let directDependencies = [];
     try {
       const packageJsonPath = path.join(config.sourceDir, 'package.json');
+      console.log(`Reading package.json from: ${packageJsonPath}`);
       if (fs.existsSync(packageJsonPath)) {
         const packageJson = require(packageJsonPath);
         
         // Get all dependencies from package.json
         if (packageJson.dependencies) {
-          dependencies = Object.keys(packageJson.dependencies);
-          console.log(`Found ${dependencies.length} dependencies in package.json`);
+          directDependencies = Object.keys(packageJson.dependencies);
+          console.log(`Found ${directDependencies.length} direct dependencies in package.json`);
         }
       } else {
         console.warn('No package.json found, using default dependencies');
@@ -140,16 +142,63 @@ async function packageApp(options) {
     
     // Add additional modules specified by user
     if (config.additionalModules && config.additionalModules.length > 0) {
-      dependencies = [...new Set([...dependencies, ...config.additionalModules])];
+      directDependencies = [...new Set([...directDependencies, ...config.additionalModules])];
     }
     
     // Filter out @nodegui modules as they're already copied
-    dependencies = dependencies.filter(dep => !dep.startsWith('@nodegui/'));
+    directDependencies = directDependencies.filter(dep => !dep.startsWith('@nodegui/'));
     
-    // Copy dependencies from node_modules
-    if (dependencies.length > 0) {
-      console.log('Copying dependencies:');
-      for (const dep of dependencies) {
+    // Set to track all dependencies to copy (direct and nested)
+    const allDependencies = new Set(directDependencies);
+    // Map to track dependencies that have been processed to avoid circular dependencies
+    const processedDeps = new Map();
+    
+    // Recursive function to find all nested dependencies
+    async function findNestedDependencies(moduleName) {
+      // Skip if already processed
+      if (processedDeps.has(moduleName)) {
+        return;
+      }
+      
+      processedDeps.set(moduleName, true);
+      const modulePath = path.join(NODE_MODULES, moduleName);
+      
+      // Check for module's package.json
+      const modulePackageJsonPath = path.join(modulePath, 'package.json');
+      if (fs.existsSync(modulePackageJsonPath)) {
+        try {
+          const modulePackageJson = require(modulePackageJsonPath);
+          
+          // Get module dependencies
+          if (modulePackageJson.dependencies) {
+            const nestedDeps = Object.keys(modulePackageJson.dependencies);
+            
+            // Add all nested dependencies to the set
+            for (const nestedDep of nestedDeps) {
+              // Skip nodegui modules
+              if (!nestedDep.startsWith('@nodegui/')) {
+                allDependencies.add(nestedDep);
+                // Recursively find this dependency's dependencies
+                await findNestedDependencies(nestedDep);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(`Error reading package.json for ${moduleName}: ${error.message}`);
+        }
+      }
+    }
+    
+    // Find all nested dependencies
+    console.log('Analyzing dependencies tree...');
+    for (const dep of directDependencies) {
+      await findNestedDependencies(dep);
+    }
+    
+    // Copy all dependencies (direct and nested)
+    if (allDependencies.size > 0) {
+      console.log(`Copying ${allDependencies.size} total dependencies (including nested dependencies):`);
+      for (const dep of allDependencies) {
         const modulePath = path.join(NODE_MODULES, dep);
         if (fs.existsSync(modulePath)) {
           console.log(`  - ${dep}`);
@@ -207,123 +256,69 @@ async function packageApp(options) {
     await fs.writeFile(
       path.join(appDir, `debug.bat`),
       `@echo off
-cd /d "%~dp0"
 echo Starting ${config.appName}...
 
-REM Set Qt environment variables
-set PATH=%~dp0;%PATH%
-set QT_PLUGIN_PATH=%~dp0
-set QT_QPA_PLATFORM_PLUGIN_PATH=%~dp0\\platforms
-
-REM Execute application with qode
-"%~dp0qode.exe" "%~dp0${mainFileRelativePath.replace(/\//g, '\\')}"
-
-REM Display error if any
-if %errorlevel% neq 0 (
-  echo Application exited with error code %errorlevel%
-  pause
-)
+qode.exe ${mainFileRelativePath.replace(/\//g, '\\')}
 `
     );
 
-    // Create PowerShell script to run hidden
+    // Create a VBS script to run the batch file hidden
+    console.log('Creating VBS hidden launcher...');
     await fs.writeFile(
-      path.join(appDir, 'run-hidden.ps1'),
-      `$env:PATH = "$PSScriptRoot;$env:PATH"
-$env:QT_PLUGIN_PATH = "$PSScriptRoot"
-$env:QT_QPA_PLATFORM_PLUGIN_PATH = "$PSScriptRoot\\platforms"
-Start-Process -FilePath "$PSScriptRoot\\qode.exe" -ArgumentList "$PSScriptRoot\\${mainFileRelativePath.replace(/\//g, '\\')}" -WindowStyle Hidden
+      path.join(appDir, 'hidden-run.vbs'),
+      `Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run chr(34) & WScript.Arguments(0) & chr(34), 0
+Set WshShell = Nothing
 `
     );
 
-    // Create C# launcher
-    console.log('Creating C# launcher...');
+    // Create a simple C launcher instead of C++
+    console.log('Creating C launcher...');
     await fs.writeFile(
-      path.join(appDir, 'NodeGuiLauncher.cs'),
-      `using System;
-using System.Diagnostics;
-using System.IO;
-using System.Windows.Forms;
+      path.join(appDir, 'NodeGuiLauncher.c'),
+      `#include <windows.h>
+#include <stdlib.h>
 
-class NodeGuiLauncher
-{
-    static void Main()
-    {
-        try
-        {
-            // Get the directory of the executable
-            string currentDir = AppDomain.CurrentDomain.BaseDirectory;
-            
-            // Path to qode and main.js
-            string qodePath = Path.Combine(currentDir, "qode.exe");
-            string mainJsPath = Path.Combine(currentDir, "${mainFileRelativePath.replace(/\//g, '\\\\')}");
-            
-            // Check if files exist
-            if (!File.Exists(qodePath))
-            {
-                MessageBox.Show("Cannot find qode.exe", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            if (!File.Exists(mainJsPath))
-            {
-                MessageBox.Show("Cannot find ${mainFileRelativePath}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            // Setup process
-            ProcessStartInfo startInfo = new ProcessStartInfo
-            {
-                FileName = qodePath,
-                Arguments = mainJsPath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = currentDir
-            };
-            
-            // Set environment for Qt
-            startInfo.EnvironmentVariables["PATH"] = currentDir + ";" + Environment.GetEnvironmentVariable("PATH");
-            startInfo.EnvironmentVariables["QT_PLUGIN_PATH"] = currentDir;
-            startInfo.EnvironmentVariables["QT_QPA_PLATFORM_PLUGIN_PATH"] = Path.Combine(currentDir, "platforms");
-            
-            // Run qode
-            Process proc = new Process { StartInfo = startInfo };
-            proc.Start();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("Error: " + ex.Message, "${config.appName} Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-}`
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Set Qt environment variables with relative paths
+    SetEnvironmentVariable("QT_PLUGIN_PATH", ".");
+    SetEnvironmentVariable("QT_QPA_PLATFORM_PLUGIN_PATH", "./platforms");
+    
+    // Run the VBS script which runs debug.bat hidden
+    const char* cmd = "wscript.exe hidden-run.vbs debug.bat";
+    
+    // Execute the command
+    WinExec(cmd, SW_HIDE);
+    
+    return 0;
+}
+`
     );
 
-    // Compile C# launcher to EXE
+    // Update compilation script for C
     try {
-      console.log('Compiling C# launcher to EXE...');
+      console.log('Compiling C launcher to EXE...');
       
-      // Create temporary bat file to compile
       const compilerScript = path.join(appDir, '_compile.bat');
       await fs.writeFile(compilerScript, 
         `@echo off
-echo Compiling C# launcher...
-set CSC=C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe
-"%CSC%" /target:winexe /out:${config.appName}.exe /reference:System.Windows.Forms.dll NodeGuiLauncher.cs
-if errorlevel 1 (
-  echo Compilation failed!
+echo Compiling C launcher...
+gcc -o ${config.appName}.exe NodeGuiLauncher.c -mwindows
+if %errorlevel% neq 0 (
+  echo Compilation failed! Try installing MinGW.
   exit /b 1
 )
+del NodeGuiLauncher.c
 echo Compilation successful!
-del NodeGuiLauncher.cs
 `);
-      
+
       execSync(compilerScript, { cwd: appDir, stdio: 'inherit' });
       await fs.remove(compilerScript);
       
       console.log('EXE launcher created successfully!');
     } catch (error) {
-      console.error('Failed to compile C# launcher:', error.message);
-      console.log('You may need to compile it manually using csc.exe');
+      console.error('Failed to compile C launcher:', error.message);
+      console.log('You can compile it manually with: gcc -o app.exe NodeGuiLauncher.c -mwindows');
     }
     
     console.log(`Packaging complete! Your application is available at: ${appDir}`);

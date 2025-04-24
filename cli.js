@@ -16,6 +16,7 @@ program
   .option('-o, --output <path>', 'output directory', path.join(process.cwd(), 'deploy'))
   .option('-m, --main <filename>', 'main file', 'main.js')
   .option('-a, --add-module <module...>', 'additional npm modules to include')
+  .option('--no-launcher', 'skip creating the C launcher')
   .action(async (options) => {
     try {
       console.log(chalk.blue('NodeGUI Builder - Packaging tool'));
@@ -24,6 +25,7 @@ program
       console.log(chalk.cyan(`  Source Directory: ${options.source}`));
       console.log(chalk.cyan(`  Output Directory: ${options.output}`));
       console.log(chalk.cyan(`  Main File: ${options.main}`));
+      console.log(chalk.cyan(`  Create Launcher: ${options.launcher !== false}`));
       
       if (options.addModule && options.addModule.length > 0) {
         console.log(chalk.cyan('  Additional Modules:'));
@@ -35,7 +37,8 @@ program
         sourceDir: options.source,
         outputDir: options.output,
         mainFile: options.main,
-        additionalModules: options.addModule || []
+        additionalModules: options.addModule || [],
+        createLauncher: options.launcher !== false
       });
       
       console.log(chalk.green(`\n✓ Application successfully packaged to:`));
