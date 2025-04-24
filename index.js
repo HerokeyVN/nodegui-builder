@@ -21,7 +21,15 @@ async function packageApp(options) {
     additionalModules: options.additionalModules || [],
   };
 
-  const NODE_MODULES = path.join(config.sourceDir, 'node_modules');
+  // Resolve absolute paths to avoid path-related issues
+  const sourceDirAbs = path.resolve(config.sourceDir);
+  const outputDirAbs = path.resolve(config.outputDir);
+  const appDirAbs = path.join(outputDirAbs, config.appName);
+  
+  // Check if output directory is inside source directory, which would cause circular copying
+  const isOutputInSource = appDirAbs.startsWith(sourceDirAbs + path.sep) || appDirAbs === sourceDirAbs;
+  
+  const NODE_MODULES = path.join(sourceDirAbs, 'node_modules');
   const NODEGUI_PATH = path.join(NODE_MODULES, '@nodegui', 'nodegui');
   const QODE_PATH = path.join(NODE_MODULES, '@nodegui', 'qode', 'binaries', 'qode.exe');
   const MINIQT_PATH = path.join(NODEGUI_PATH, 'miniqt');
@@ -31,47 +39,71 @@ async function packageApp(options) {
     console.log('Using qode from:', QODE_PATH);
     
     // Create output directory
-    const appDir = path.join(config.outputDir, config.appName);
+    const appDir = appDirAbs;
     await fs.ensureDir(appDir);
     await fs.emptyDir(appDir);
     
-    // Copy the entire project except node_modules and other unnecessary directories
+    // Copy project files - improved approach to avoid recursive copying
     console.log('Copying project files...');
     const ignoredDirs = [
       'node_modules', 
       '.git', 
       '.github',
-      'dist', 
-      'deploy', 
-      'build',
       'coverage',
       '.vscode',
       '.idea'
     ];
     
-    // Custom filter function to ignore node_modules and other directories
-    const filterFunc = (src) => {
-      const relativePath = path.relative(config.sourceDir, src);
-      
-      // Always include files at the root level
-      if (!relativePath || !relativePath.includes(path.sep)) {
-        return true;
+    // Add output directory to ignored dirs
+    if (isOutputInSource) {
+      const relativeOutputPath = path.relative(sourceDirAbs, outputDirAbs);
+      if (relativeOutputPath) {
+        ignoredDirs.push(relativeOutputPath);
+        console.log(`Detected output inside source directory, excluding: ${relativeOutputPath}`);
       }
+    }
+
+    // Manual recursive copy implementation to avoid fs-extra's limitation
+    async function copyDirRecursive(src, dest) {
+      // Read source directory contents
+      const entries = await fs.readdir(src, { withFileTypes: true });
       
-      // Check if path starts with any ignored directory
-      return !ignoredDirs.some(dir => 
-        relativePath === dir || 
-        relativePath.startsWith(dir + path.sep)
-      );
-    };
+      // Create the destination directory
+      await fs.ensureDir(dest);
+      
+      // Process each entry
+      for (const entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        
+        // Skip ignored directories
+        const relativePath = path.relative(sourceDirAbs, srcPath);
+        const shouldIgnore = ignoredDirs.some(dir => 
+          relativePath === dir || 
+          (relativePath && relativePath.startsWith(dir + path.sep))
+        );
+        
+        if (shouldIgnore) {
+          console.log(`  Skipping: ${relativePath}`);
+          continue;
+        }
+        
+        // Handle directories vs files
+        if (entry.isDirectory()) {
+          await copyDirRecursive(srcPath, destPath);
+        } else {
+          await fs.copy(srcPath, destPath);
+        }
+      }
+    }
     
-    // Copy project files with filtering
-    await fs.copy(config.sourceDir, appDir, { 
-      filter: filterFunc,
-      dereference: true
-    });
-    
+    // Start the copying process from source to app directory
+    await copyDirRecursive(sourceDirAbs, appDir);
     console.log('Project files copied successfully');
+    
+    // Handle main file path if it's not already copied in the project structure
+    const mainFilePath = path.join(sourceDirAbs, config.mainFile);
+    const mainFileRelativePath = config.mainFile; // Keep relative path for launching
     
     // Create node_modules directory (it might already exist from the copy operation)
     await fs.ensureDir(path.join(appDir, 'node_modules'));
