@@ -1,6 +1,6 @@
 {
   "name": "nodegui-builder",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tool for packaging NodeGUI applications into standalone executables",
   "main": "index.js",
   "bin": {
@@ -16,6 +16,8 @@
   "keywords": [
     "nodegui",
     "packaging",
+    "build",
+    "builder",
     "desktop",
     "qode",
     "qt"
